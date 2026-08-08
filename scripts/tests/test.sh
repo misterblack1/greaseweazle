@@ -2,6 +2,9 @@ set -e
 
 GW="gw --bt"
 
+# Hardware-free unit tests (stdlib unittest; no test-only dependencies).
+${PYTHON:-python3} -m unittest discover -s scripts/tests -p 'test_*.py'
+
 rm -rf .test
 mkdir -p .test
 pushd .test

@@ -2,11 +2,18 @@
 
 ## About this fork: the `gw-diag` command
 
-This is a fork of [keirf/greaseweazle][upstream] that adds **one new command,
-`gw-diag`**: an interactive, live disk/drive diagnostic for bench-testing
-floppy drives and disks in real time. Everything else in this repository is
-unchanged from upstream, and the change is self-contained (a new
-`tools/diag/` package plus a single dispatch line in `cli.py`).
+This is a fork of [keirf/greaseweazle][upstream] that adds **two new
+commands** for bench-testing floppy drives:
+
+* **`gw-diag`** — an interactive, live disk/drive diagnostic, described
+  below.
+* **[`gw-probe`](#the-gw-probe-command)** — a non-interactive suite which
+  measures what a drive can do and saves the answers for comparison later.
+
+Everything else in this repository is unchanged from upstream, and both
+additions are self-contained: a `tools/diag/` and a `tools/probe/` package,
+two dispatch lines in `cli.py`, and one optional argument added to
+`usb.py`'s `seek()`.
 
 ### What it does
 
@@ -200,11 +207,111 @@ pipx install git+https://github.com/misterblack1/greaseweazle@diag
 gw diag --rate 500
 ```
 
-### Status and LLM Usage
+## The `gw-probe` command
 
-`gw diag` like the rest of Greaseweazle, is released into the public domain. See [COPYING](COPYING).
+Where `gw read` images a disk and `gw-diag` watches one live, **`gw-probe`
+characterises the drive itself**. It answers questions about the mechanism
+rather than the media: how many cylinders the head actually reaches, whether
+there are two heads, how fast it can be stepped before it falls behind, what
+pin 34 means on this particular drive.
 
-**LLM assistance was used in the creation of the `gw diag` code. Design, QA and testing were done by hand.**
+The answers are saved as a **drive profile**, which can be compared against
+one taken from the same drive months earlier to see what has changed.
+
+### What it measures
+
+| Probe | Needs in the drive | Answers |
+|-------|--------------------|---------|
+| `trk0-sensor` | nothing | Does the Track 0 sensor report position correctly? |
+| `max-track` | nothing | Highest cylinder the head reaches. **Wears the drive** |
+| `index-sensor` | any disk | Is the index signal present and steady? |
+| `pin34` | any disk | Is pin 34 DISK-CHANGE or READY? |
+| `multi-speed` | any disk | Does driving pin 2 change the spindle speed? |
+| `spin-up` | any disk | How long after motor-on the drive delivers index |
+| `step-timing` | any disk | Fastest stepping and shortest settle. **Wears the drive** |
+| `double-step` | PC-formatted | Does this disk need double-stepping in this drive? |
+| `head-count` | scratch | One head or two? **Writes** |
+| `max-track-write` | scratch | Confirms `max-track` by a method that counts no steps. **Writes** |
+| `write-verify` | scratch | Does a written track read back as written? **Writes** |
+
+Nothing is assumed about the drive. No datasheet figure is used as a default,
+a bound or an expectation, and results belong to the drive measured — two
+drives of the same model will differ, and so will one drive over its life.
+That is the point of measuring rather than looking up.
+
+### Usage
+
+```
+gw-probe --all --name "my drive" --save profile.json
+gw-probe --all --dry-run          # the plan, without touching the drive
+gw-probe --list-probes            # the probes and what each needs
+gw-probe --compare old.json       # against a profile saved earlier
+```
+
+| Option | Purpose |
+|--------|---------|
+| `--all` | Every probe, including the two which wear the drive |
+| `--write-test` | The probes which write, but not the ones which wear |
+| `--allow-wear` | The probes which wear the drive |
+| `--only PROBE` | Just this probe, repeatable; its prerequisites run too |
+| `--name NAME` | A label for the drive, recorded in the profile. Never guessed |
+| `--save FILE` / `--compare FILE` | Write a profile, or diff against one |
+| `--max-cylinder N` | Optional ceiling on how far the head is driven. No default |
+| `--yes` / `--non-interactive` | Approve writing without asking / decline it and never wait |
+| `--dry-run` | Print the plan and stop |
+
+Run `gw-probe --help` for the full list.
+
+### What it asks of you
+
+A full run needs **two disk changes** and stops to wait at each one: an empty
+drive, then any readable disk, then a PC-formatted one, then a scratch disk
+which gets written over. The probes are ordered so that is the fewest changes
+possible. `--dry-run` prints the sequence first, so the disks can be
+collected before starting.
+
+It asks **once** before writing anything, not once per probe.
+
+### Two probes wear the drive
+
+`max-track` finds the outermost cylinder by driving the head into its stop,
+because that is the only way to find where the stop is. `step-timing` finds
+the fastest usable step rate by exceeding it — and on one older drive a
+failed trial left the head so far out of step that the firmware would no
+longer move it at all, and the drive needed a power cycle.
+
+Both are excluded from a plain run and from other probes' prerequisites.
+They run only when named with `--only`, or with `--allow-wear` or `--all`.
+
+### Drive profiles
+
+A profile records every probe's result, a timestamp, the name you gave the
+drive, and the Greaseweazle firmware which did the measuring. `--compare`
+diffs two of them.
+
+Comparison is deliberately reluctant to cry wolf. Each probe declares
+tolerances for its own fields, because only it knows which of its numbers are
+measurements and why they move — the time to first index, for instance,
+wanders by up to a whole revolution between runs, so comparing it tightly
+would report a change every time. A probe which did not run is reported as
+not measured rather than as a failure, and a firmware change is reported
+separately from anything about the drive.
+
+### Getting started
+
+`gw-probe` runs from source with no build or install step, the same way as
+`gw-diag`: `./gw-probe.sh` on macOS and Linux. If you installed with pipx,
+the command is `gw probe` with a space.
+
+Unlike `gw-diag` it needs no interactive terminal features — it only ever
+waits for Enter — so it is happy over ssh, and `--non-interactive` removes
+even that.
+
+## Status and LLM Usage
+
+`gw diag` and `gw probe`, like the rest of Greaseweazle, are released into the public domain. See [COPYING](COPYING).
+
+**LLM assistance was used in the creation of the `gw diag` and `gw probe` code. Design, QA and testing were done by hand.**
 
 [upstream]: https://github.com/keirf/greaseweazle
 

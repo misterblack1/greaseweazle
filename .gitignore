@@ -21,4 +21,6 @@
 /build/
 /dist/
 /src/greaseweazle/__init__.py
+/.claude/
+/whats-next.md
 

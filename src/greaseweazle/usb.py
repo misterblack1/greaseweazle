@@ -256,7 +256,11 @@ class Unit:
 
     ## seek:
     ## Seek the selected drive's heads to the specified track (cyl, head).
-    def seek(self, cyl, head) -> None:
+    ## check_trk0=False suppresses the /TRK0-vs-cylinder consistency check,
+    ## for callers which deliberately drive the head out of step with the
+    ## firmware's idea of its position (eg. the max-track probe, which stalls
+    ## the head against the outer stop and then counts steps back to /TRK0).
+    def seek(self, cyl, head, check_trk0: bool = True) -> None:
         if -0x80 <= cyl <= 0x7f:
             cmd = struct.pack("2Bb", Cmd.Seek, 3, cyl)
         elif -0x8000 <= cyl <= 0x7fff:
@@ -264,29 +268,30 @@ class Unit:
         else:
             raise error.Fatal(f'Seek: Invalid cylinder {cyl}')
         self._send_cmd(cmd)
-        trk0 = not self.get_pin(26)
-        if cyl == 0 and not trk0:
-            # This can happen with Kryoflux flippy-modded Panasonic drives
-            # which may not assert the /TRK0 signal when stepping *inward*
-            # from cylinder -1. We can check this by attempting a fake outward
-            # step, which is exactly NoClickStep's purpose.
-            try:
-                info = self.get_current_drive_info()
-                if info.is_flippy:
-                    self._send_cmd(struct.pack("2B", Cmd.NoClickStep, 2))
-            except CmdError:
-                # GetInfo.CurrentDrive is unsupported by older firmwares.
-                # NoClickStep is "best effort". We're on a likely error
-                # path anyway, so let them fail silently.
-                pass
-            trk0 = not self.get_pin(26) # now re-sample /TRK0
-        error.check(cyl < 0 or (cyl == 0) == trk0,
-                    '''\
+        if check_trk0:
+            trk0 = not self.get_pin(26)
+            if cyl == 0 and not trk0:
+                # This can happen with Kryoflux flippy-modded Panasonic drives
+                # which may not assert the /TRK0 signal when stepping *inward*
+                # from cylinder -1. We can check this by attempting a fake
+                # outward step, which is exactly NoClickStep's purpose.
+                try:
+                    info = self.get_current_drive_info()
+                    if info.is_flippy:
+                        self._send_cmd(struct.pack("2B", Cmd.NoClickStep, 2))
+                except CmdError:
+                    # GetInfo.CurrentDrive is unsupported by older firmwares.
+                    # NoClickStep is "best effort". We're on a likely error
+                    # path anyway, so let them fail silently.
+                    pass
+                trk0 = not self.get_pin(26) # now re-sample /TRK0
+            error.check(cyl < 0 or (cyl == 0) == trk0,
+                        '''\
 Track0 signal %s after seek to cylinder %d
  1. Try "gw reset" to re-calibrate the drive-head position
  2. If the error persists try slowing down seek operations
      eg. "gw delays --step 20000" for 20ms per step'''
-                    % (('absent', 'asserted')[trk0], cyl))
+                        % (('absent', 'asserted')[trk0], cyl))
         self._send_cmd(struct.pack("3B", Cmd.Head, 3, head))
 
 
